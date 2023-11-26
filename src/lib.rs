@@ -342,19 +342,20 @@ impl Encoder<'_> {
 	}
 
 	fn is_blocked_id(&self, id: &[u8]) -> bool {
-		let id: Vec<u8> = id.iter().map(u8::to_ascii_lowercase).collect();
-
 		for word in self.blocklist {
 			if word.len() <= id.len() {
 				if id.len() <= 3 || word.len() <= 3 {
-					if id == *word {
+					if id.eq_ignore_ascii_case(word) {
 						return true;
 					}
 				} else if word.iter().any(|c| c.is_ascii_digit()) {
-					if id.starts_with(word) || id.ends_with(word) {
+					// Check if id starts or ends with the word.
+					if id[..word.len()].eq_ignore_ascii_case(word) ||
+						id[id.len() - word.len()..].eq_ignore_ascii_case(word)
+					{
 						return true;
 					}
-				} else if id.windows(word.len()).any(|w| w == word) {
+				} else if id.windows(word.len()).any(|w| w.eq_ignore_ascii_case(word)) {
 					return true;
 				}
 			}
@@ -369,13 +370,18 @@ impl Encoder<'_> {
 }
 
 struct Decoder<'a> {
-	alphabet: &'a [u8],
+	base_alphabet: &'a [u8],
+	current_alphabet: Vec<u8>,
 	numbers: Vec<u64>,
 }
 
 impl Decoder<'_> {
 	fn new(sqids: &Sqids) -> Decoder {
-		Decoder { alphabet: &sqids.alphabet, numbers: Vec::new() }
+		Decoder {
+			base_alphabet: &sqids.alphabet,
+			current_alphabet: Vec::new(),
+			numbers: Vec::new(),
+		}
 	}
 
 	pub fn decode(&mut self, id: &str) {
@@ -385,35 +391,37 @@ impl Decoder<'_> {
 			return;
 		}
 
-		let alphabet_chars: HashSet<char> = self.alphabet.iter().cloned().map(char::from).collect();
+		let alphabet_chars: HashSet<char> =
+			self.base_alphabet.iter().cloned().map(char::from).collect();
 		if !id.chars().all(|c| alphabet_chars.contains(&c)) {
 			return;
 		}
 
 		let id = id.as_bytes();
 		let prefix = id[0];
-		let offset = self.alphabet.iter().position(|&c| c == prefix).unwrap();
-		let mut alphabet: Vec<u8> = self.alphabet.to_vec();
-		alphabet.rotate_left(offset);
-		alphabet.reverse();
+		let offset = self.base_alphabet.iter().position(|&c| c == prefix).unwrap();
+		self.current_alphabet.clear();
+		self.current_alphabet.extend_from_slice(&self.base_alphabet[offset..]);
+		self.current_alphabet.extend_from_slice(&self.base_alphabet[..offset]);
+		self.current_alphabet.reverse();
 
 		let id = &id[1..];
-		let separator = Cell::new(alphabet[0]);
+		let separator = Cell::new(self.current_alphabet[0]);
 
 		for chunk in id.split(|c| *c == separator.get()) {
 			if chunk.is_empty() {
 				return;
 			}
 
-			let alphabet_without_separator = &alphabet[1..];
-			self.decode_number(chunk, alphabet_without_separator);
+			self.decode_number(chunk);
 
-			Sqids::shuffle(&mut alphabet);
-			separator.set(alphabet[0]);
+			Sqids::shuffle(&mut self.current_alphabet);
+			separator.set(self.current_alphabet[0]);
 		}
 	}
 
-	fn decode_number(&mut self, id: &[u8], alphabet: &[u8]) {
+	fn decode_number(&mut self, id: &[u8]) {
+		let alphabet = &self.current_alphabet[1..];
 		let mut result = 0;
 
 		for c in id {
