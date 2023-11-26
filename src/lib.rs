@@ -244,7 +244,8 @@ impl Sqids {
 }
 
 struct Encoder<'a> {
-	alphabet: &'a [u8],
+	base_alphabet: &'a [u8],
+	current_alphabet: Vec<u8>,
 	min_length: u8,
 	blocklist: &'a HashSet<Vec<u8>>,
 	id: Vec<u8>,
@@ -253,7 +254,8 @@ struct Encoder<'a> {
 impl Encoder<'_> {
 	fn new(sqids: &Sqids) -> Encoder {
 		Encoder {
-			alphabet: &sqids.alphabet,
+			base_alphabet: &sqids.alphabet,
+			current_alphabet: Vec::new(),
 			min_length: sqids.min_length,
 			blocklist: &sqids.blocklist,
 			id: Vec::new(),
@@ -267,7 +269,7 @@ impl Encoder<'_> {
 			return Ok(());
 		}
 
-		for increment in 0..self.alphabet.len() {
+		for increment in 0..self.base_alphabet.len() {
 			self.encode_numbers(numbers, increment)?;
 
 			if !self.is_blocked_id(&self.id) {
@@ -281,36 +283,38 @@ impl Encoder<'_> {
 
 	fn encode_numbers(&mut self, numbers: &[u64], increment: usize) -> Result<()> {
 		let mut offset = numbers.iter().enumerate().fold(numbers.len(), |a, (i, &v)| {
-			self.alphabet[v as usize % self.alphabet.len()] as usize + i + a
-		}) % self.alphabet.len();
+			self.base_alphabet[v as usize % self.base_alphabet.len()] as usize + i + a
+		}) % self.base_alphabet.len();
 
-		offset = (offset + increment) % self.alphabet.len();
+		offset = (offset + increment) % self.base_alphabet.len();
 
-		let mut alphabet = self.alphabet.to_vec();
-		alphabet.rotate_left(offset);
+		self.current_alphabet.clear();
+		self.current_alphabet.extend_from_slice(&self.base_alphabet[offset..]);
+		self.current_alphabet.extend_from_slice(&self.base_alphabet[..offset]);
 
 		self.id.clear();
-		self.id.push(alphabet[0]);
+		self.id.push(self.current_alphabet[0]);
 
-		alphabet = alphabet.into_iter().rev().collect();
+		self.current_alphabet.reverse();
 
 		for (i, &num) in numbers.iter().enumerate() {
-			self.encode_number(num, &alphabet[1..]);
+			self.encode_number(num);
 
 			if i < numbers.len() - 1 {
-				self.id.push(alphabet[0]);
-				Sqids::shuffle(&mut alphabet);
+				self.id.push(self.current_alphabet[0]);
+				Sqids::shuffle(&mut self.current_alphabet);
 			}
 		}
 
 		if self.min_length as usize > self.id.len() {
-			self.id.push(alphabet[0]);
+			self.id.push(self.current_alphabet[0]);
 
 			while self.min_length as usize - self.id.len() > 0 {
-				Sqids::shuffle(&mut alphabet);
+				Sqids::shuffle(&mut self.current_alphabet);
 
-				let slice_len = min(self.min_length as usize - self.id.len(), alphabet.len());
-				let slice = &alphabet[..slice_len];
+				let slice_len =
+					min(self.min_length as usize - self.id.len(), self.current_alphabet.len());
+				let slice = &self.current_alphabet[..slice_len];
 
 				self.id.extend(slice);
 			}
@@ -319,7 +323,8 @@ impl Encoder<'_> {
 		Ok(())
 	}
 
-	fn encode_number(&mut self, num: u64, alphabet: &[u8]) {
+	fn encode_number(&mut self, num: u64) {
+		let alphabet = &self.current_alphabet[1..];
 		let mut result = num;
 		let end = self.id.len();
 
