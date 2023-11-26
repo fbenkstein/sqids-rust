@@ -15,3 +15,17 @@ derive_builder = "0.12.0"
 serde = "1.0.192"
 serde_json = "1.0.108"
 thiserror = "1.0.50"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "basic"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }
+
+[profile.bench]
+opt-level = 2
+codegen-units = 1
