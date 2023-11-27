@@ -232,25 +232,65 @@ impl Sqids {
 	/// blocked word is encountered another attempt is made by shifting the alphabet.
 	/// When the alphabet is exhausted and all possible sqids for this input are blocked
 	/// [Error::BlocklistMaxAttempts] is returned.
+	///
+	/// # Example
+	/// ```
+	/// # use sqids::Sqids;
+	/// let sqids = Sqids::default();
+	/// let id: String = sqids.encode(&[1, 2, 3])?;
+	/// assert_eq!(id, "86Rf07");
+	/// # Ok::<(), sqids::Error>(())
+	/// ```
 	pub fn encode(&self, numbers: &[u64]) -> Result<String> {
 		let mut encoder = self.encoder();
 		encoder.encode(numbers)?;
 		Ok(encoder.into_id())
 	}
 
-	fn encoder(&self) -> Encoder {
+	/// Get an encoder that can be used to repeatedly encode sqids slightly more efficiently.
+	///
+	/// # Example
+	/// ```
+	/// # use sqids::Sqids;
+	/// let sqids = Sqids::default();
+	/// let mut encoder = sqids.encoder();
+	/// let id: &str = encoder.encode(&[1, 2, 3])?;
+	/// assert_eq!(id, "86Rf07");
+	/// # Ok::<(), sqids::Error>(())
+	/// ```
+	pub fn encoder(&self) -> Encoder {
 		Encoder::new(self)
 	}
 
 	/// Decode a sqid into a vector of numbers. When an invalid sqid is encountered an empty vector
 	/// is returned.
+	///
+	/// # Example
+	/// ```
+	/// # use sqids::Sqids;
+	/// let sqids = Sqids::default();
+	/// let numbers: Vec<u64> = sqids.decode("86Rf07");
+	/// assert_eq!(numbers, [1, 2, 3]);
+	/// # Ok::<(), sqids::Error>(())
+	/// ```
 	pub fn decode(&self, id: &str) -> Vec<u64> {
 		let mut decoder = self.decoder();
 		decoder.decode(id);
 		decoder.into_numbers()
 	}
 
-	fn decoder(&self) -> Decoder {
+	/// Get a decoder that can be used to repeatedly decode sqids slightly more efficiently.
+	///
+	/// # Example
+	/// ```
+	/// # use sqids::Sqids;
+	/// let sqids = Sqids::default();
+	/// let mut decoder = sqids.decoder();
+	/// let numbers: &[u64] = decoder.decode("86Rf07");
+	/// assert_eq!(numbers, [1, 2, 3]);
+	/// # Ok::<(), sqids::Error>(())
+	/// ```
+	pub fn decoder(&self) -> Decoder {
 		Decoder::new(self)
 	}
 
@@ -263,7 +303,9 @@ impl Sqids {
 	}
 }
 
-struct Encoder<'a> {
+/// Encoder for sqids that is slightly more efficient than repeatedly calling [Sqids::encode].
+/// Created with [Sqids::encoder].
+pub struct Encoder<'a> {
 	base_alphabet: &'a [u8],
 	current_alphabet: Vec<u8>,
 	min_length: u8,
@@ -282,18 +324,37 @@ impl Encoder<'_> {
 		}
 	}
 
-	fn encode(&mut self, numbers: &[u64]) -> Result<()> {
+	/// Generate a sqid from a slice of numbers.
+	///
+	/// When an sqid is generated it is checked against the [SqidsBuilder::blocklist]. When a
+	/// blocked word is encountered another attempt is made by shifting the alphabet.
+	/// When the alphabet is exhausted and all possible sqids for this input are blocked
+	/// [Error::BlocklistMaxAttempts] is returned.
+	///
+	/// This functions a borrowed id. If you need an owned one, use [Encoder::into_id] which will
+	/// consume the encoder.
+	///
+	/// # Example
+	/// ```
+	/// # use sqids::Sqids;
+	/// let sqids = Sqids::default();
+	/// let mut encoder = sqids.encoder();
+	/// let id: &str = encoder.encode(&[1, 2, 3])?;
+	/// assert_eq!(id, "86Rf07");
+	/// # Ok::<(), sqids::Error>(())
+	/// ```
+	pub fn encode(&mut self, numbers: &[u64]) -> Result<&str> {
 		self.id.clear();
 
 		if numbers.is_empty() {
-			return Ok(());
+			return Ok("");
 		}
 
 		for increment in 0..self.base_alphabet.len() {
 			self.encode_numbers(numbers, increment)?;
 
 			if !self.is_blocked_id(&self.id) {
-				return Ok(());
+				return Ok(std::str::from_utf8(&self.id).expect("non-utf8 character encountered"));
 			}
 		}
 
@@ -387,12 +448,15 @@ impl Encoder<'_> {
 		false
 	}
 
-	fn into_id(self) -> String {
+	/// Consume the encoder and return the last encoded id.
+	pub fn into_id(self) -> String {
 		String::from_utf8(self.id).expect("non-utf8 character encountered")
 	}
 }
 
-struct Decoder<'a> {
+/// Decoder for sqids that is slightly more efficidet than repeatedly calling [Sqids::decode].
+/// Created with [Sqids::decoder].
+pub struct Decoder<'a> {
 	base_alphabet: &'a [u8],
 	current_alphabet: Vec<u8>,
 	numbers: Vec<u64>,
@@ -407,17 +471,32 @@ impl Decoder<'_> {
 		}
 	}
 
-	pub fn decode(&mut self, id: &str) {
+	/// Decode a sqid into a vector of numbers. When an invalid sqid is encountered an empty slice
+	/// is returned.
+	///
+	/// This functions a borrowed slice of numbers. If you need an owned vector, use
+	/// [Decoder::into_numbers] which will consume the encoder.
+	///
+	/// # Example
+	/// ```
+	/// # use sqids::Sqids;
+	/// let sqids = Sqids::default();
+	/// let mut decoder = sqids.decoder();
+	/// let numbers: &[u64] = decoder.decode("86Rf07");
+	/// assert_eq!(numbers, [1, 2, 3]);
+	/// # Ok::<(), sqids::Error>(())
+	/// ```
+	pub fn decode(&mut self, id: &str) -> &[u64] {
 		self.numbers.clear();
 
 		if id.is_empty() {
-			return;
+			return &self.numbers;
 		}
 
 		let alphabet_chars: HashSet<char> =
 			self.base_alphabet.iter().cloned().map(char::from).collect();
 		if !id.chars().all(|c| alphabet_chars.contains(&c)) {
-			return;
+			return &self.numbers;
 		}
 
 		let id = id.as_bytes();
@@ -433,7 +512,7 @@ impl Decoder<'_> {
 
 		for chunk in id.split(|c| *c == separator.get()) {
 			if chunk.is_empty() {
-				return;
+				break;
 			}
 
 			self.decode_number(chunk);
@@ -441,6 +520,8 @@ impl Decoder<'_> {
 			Sqids::shuffle(&mut self.current_alphabet);
 			separator.set(self.current_alphabet[0]);
 		}
+
+		&self.numbers
 	}
 
 	fn decode_number(&mut self, id: &[u8]) {
@@ -455,7 +536,8 @@ impl Decoder<'_> {
 		self.numbers.push(result)
 	}
 
-	fn into_numbers(self) -> Vec<u64> {
+	/// Consume the decoder and return the decoded numbers.
+	pub fn into_numbers(self) -> Vec<u64> {
 		self.numbers
 	}
 }

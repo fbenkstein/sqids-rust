@@ -51,10 +51,22 @@ fn bench_encode(c: &mut Criterion) {
 	for Input { numbers, ref parameter_id } in inputs() {
 		let id = sqids.encode(&numbers).unwrap();
 		group.throughput(criterion::Throughput::Bytes(id.len() as u64));
+
 		group.bench_with_input(
 			BenchmarkId::new("Sqids::encode", parameter_id),
 			&numbers,
 			|b, x| b.iter(|| sqids.encode(black_box(x))),
+		);
+
+		let mut encoder = sqids.encoder();
+		group.bench_with_input(
+			BenchmarkId::new("Encoder::encode", parameter_id),
+			&numbers,
+			|b, x| {
+				b.iter(|| {
+					let _ = encoder.encode(black_box(x));
+				})
+			},
 		);
 	}
 
@@ -69,8 +81,16 @@ fn bench_decode(c: &mut Criterion) {
 	for Input { numbers, ref parameter_id } in inputs() {
 		let id = sqids.encode(&numbers).unwrap();
 		group.throughput(criterion::Throughput::Bytes(id.len() as u64));
+
 		group.bench_with_input(BenchmarkId::new("Squids::decode", parameter_id), &id, |b, x| {
 			b.iter(|| sqids.decode(black_box(x)))
+		});
+
+		let mut decoder = sqids.decoder();
+		group.bench_with_input(BenchmarkId::new("Decoder::decode", parameter_id), &id, |b, x| {
+			b.iter(|| {
+				let _ = decoder.decode(black_box(x));
+			})
 		});
 	}
 
