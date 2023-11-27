@@ -118,6 +118,17 @@ impl Default for Options {
 	}
 }
 
+const MINIMUM_BLOCKED_WORD_LENGTH: usize = 3;
+
+#[derive(Debug)]
+struct BlocklistItem {
+	// We can have a lot of these words so dropping the capacity field might save some space.
+	word: Box<[u8]>,
+	contains_digit: bool,
+}
+
+type Blocklist = Vec<BlocklistItem>;
+
 /// A generator for sqids.
 #[derive(Debug, Builder)]
 #[builder(build_fn(skip, error = "Error"), pattern = "owned")]
@@ -127,10 +138,10 @@ pub struct Sqids {
 	alphabet: Vec<u8>,
 	/// The minimum length of a sqid.
 	min_length: u8,
-	/// Blocklist. When creating a sqid strings that begins
-	/// with one of these will be avoided.
+	/// Blocklist. When creating a sqid strings that contain
+	/// one of these will be avoided.
 	#[builder(field(type = "Option<HashSet<String>>"), setter(strip_option))]
-	blocklist: HashSet<Vec<u8>>,
+	blocklist: Blocklist,
 }
 
 impl Default for Sqids {
@@ -164,25 +175,34 @@ impl SqidsBuilder {
 			return Err(Error::AlphabetUniqueCharacters);
 		}
 
-		let lowercase_alphabet: Vec<char> =
-			alphabet.chars().map(|c| c.to_ascii_lowercase()).collect();
-		// Lowercase all words, remove words that contain characters not in the alphabet since these
-		// can never match and then make words into byte vectors.
-		let blocklist = self
+		let mut alphabet = alphabet.into_bytes();
+		let lowercase_alphabet: HashSet<u8> =
+			alphabet.iter().map(|b| b.to_ascii_lowercase()).collect();
+		// Lowercase all words, remove words that contain characters not in the alphabet (since
+		// these can never match), remove duplicates, make words into byte vectors, mark words
+		// containing digits and finally sort by length.
+		let mut blocklist: Blocklist = self
 			.blocklist
 			.unwrap_or_else(default_blocklist)
-			.iter()
-			.filter_map(|word| {
-				let word = word.to_lowercase();
-				if word.len() >= 3 && word.chars().all(|c| lowercase_alphabet.contains(&c)) {
-					Some(word.into_bytes())
-				} else {
-					None
-				}
+			.into_iter()
+			.filter(|word| word.len() >= MINIMUM_BLOCKED_WORD_LENGTH)
+			.filter(|word| word.is_ascii())
+			.map(|word| {
+				let mut word = word.into_bytes();
+				word.make_ascii_lowercase();
+				word.into_boxed_slice()
+			})
+			.filter(|word| word.iter().all(|b| lowercase_alphabet.contains(b)))
+			// Remove duplicates.
+			.collect::<HashSet<_>>()
+			.into_iter()
+			.map(|word| {
+				let contains_digit = word.iter().any(|c| c.is_ascii_digit());
+				BlocklistItem { word, contains_digit }
 			})
 			.collect();
+		blocklist.sort_by_key(|BlocklistItem { word, .. }| word.len());
 
-		let mut alphabet = alphabet.into_bytes();
 		Sqids::shuffle(&mut alphabet);
 		let min_length = self.min_length.unwrap_or(0);
 
@@ -247,7 +267,7 @@ struct Encoder<'a> {
 	base_alphabet: &'a [u8],
 	current_alphabet: Vec<u8>,
 	min_length: u8,
-	blocklist: &'a HashSet<Vec<u8>>,
+	blocklist: &'a Blocklist,
 	id: Vec<u8>,
 }
 
@@ -342,22 +362,25 @@ impl Encoder<'_> {
 	}
 
 	fn is_blocked_id(&self, id: &[u8]) -> bool {
-		for word in self.blocklist {
-			if word.len() <= id.len() {
-				if id.len() <= 3 || word.len() <= 3 {
-					if id.eq_ignore_ascii_case(word) {
-						return true;
-					}
-				} else if word.iter().any(|c| c.is_ascii_digit()) {
-					// Check if id starts or ends with the word.
-					if id[..word.len()].eq_ignore_ascii_case(word) ||
-						id[id.len() - word.len()..].eq_ignore_ascii_case(word)
-					{
-						return true;
-					}
-				} else if id.windows(word.len()).any(|w| w.eq_ignore_ascii_case(word)) {
+		for &BlocklistItem { ref word, contains_digit } in self.blocklist {
+			if word.len() > id.len() {
+				// Words are ordered by length, all remaining words are longer than id.
+				break;
+			}
+
+			if word.len() == MINIMUM_BLOCKED_WORD_LENGTH {
+				if id.eq_ignore_ascii_case(word) {
 					return true;
 				}
+			} else if contains_digit {
+				// Check if id starts or ends with the word.
+				if id[..word.len()].eq_ignore_ascii_case(word) ||
+					id[id.len() - word.len()..].eq_ignore_ascii_case(word)
+				{
+					return true;
+				}
+			} else if id.windows(word.len()).any(|w| w.eq_ignore_ascii_case(word)) {
+				return true;
 			}
 		}
 
